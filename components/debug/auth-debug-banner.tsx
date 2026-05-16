@@ -24,6 +24,10 @@ export function AuthDebugBanner() {
   const debug = useQuery(api.authDebug.inspect);
 
   const claims = decodeClaims(accessToken);
+  const tokenAgeSeconds =
+    claims && typeof claims.iat === "number" ? Math.floor(Date.now() / 1000) - (claims.iat as number) : null;
+  const tokenExpiresInSeconds =
+    claims && typeof claims.exp === "number" ? (claims.exp as number) - Math.floor(Date.now() / 1000) : null;
 
   return (
     <details className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
@@ -31,6 +35,12 @@ export function AuthDebugBanner() {
         auth bridge debug — click to expand
       </summary>
       <div className="mt-3 space-y-3 font-mono">
+        <section>
+          <div className="font-semibold">Token age (seconds since iat / seconds until exp)</div>
+          <pre>
+            age={tokenAgeSeconds ?? "?"}, expiresIn={tokenExpiresInSeconds ?? "?"}
+          </pre>
+        </section>
         <section>
           <div className="font-semibold">WorkOS user (browser)</div>
           <pre className="overflow-x-auto whitespace-pre-wrap break-all">
