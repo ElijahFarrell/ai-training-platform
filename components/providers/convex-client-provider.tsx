@@ -33,10 +33,13 @@ function useAuthFromAuthKit() {
   const isAuthenticated = !!user;
 
   const fetchAccessToken = useCallback(
-    async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
+    async ({ forceRefreshToken }: { forceRefreshToken?: boolean } = {}): Promise<string | null> => {
+      if (!user) {
+        return null;
+      }
       try {
         if (forceRefreshToken) {
-          await refresh();
+          return (await refresh()) ?? null;
         }
         return (await getAccessToken()) ?? null;
       } catch (error) {
@@ -44,7 +47,7 @@ function useAuthFromAuthKit() {
         return null;
       }
     },
-    [refresh, getAccessToken],
+    [user, refresh, getAccessToken],
   );
 
   return useMemo(
