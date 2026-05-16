@@ -28,6 +28,13 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# agent / editor working files (not part of the project)
+.agents/
+AGENTS.md
+CLAUDE.md
+skills-lock.json
+convex/_generated/ai/
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
