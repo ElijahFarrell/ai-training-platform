@@ -39,6 +39,10 @@ export const upsertFromIdentity = mutation({
     if (!identity) throw new Error("Not authenticated");
 
     const workosId = identity.subject;
+    const email =
+      typeof identity.email === "string" && identity.email.includes("@")
+        ? identity.email
+        : args.email;
     const existing = await ctx.db
       .query("users")
       .withIndex("by_workos_id", (q) => q.eq("workosId", workosId))
@@ -47,12 +51,12 @@ export const upsertFromIdentity = mutation({
     const displayName =
       args.displayName?.trim() ||
       (identity.name as string | undefined)?.trim() ||
-      args.email.split("@")[0] ||
+      email.split("@")[0] ||
       DEFAULT_DISPLAY_NAME;
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        email: args.email,
+        email,
         displayName,
         lastSeenAt: Date.now(),
       });
@@ -61,15 +65,10 @@ export const upsertFromIdentity = mutation({
 
     const existingByEmail = await ctx.db
       .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.email))
+      .withIndex("by_email", (q) => q.eq("email", email))
       .unique();
     if (existingByEmail) {
-      await ctx.db.patch(existingByEmail._id, {
-        workosId,
-        displayName,
-        lastSeenAt: Date.now(),
-      });
-      return existingByEmail._id;
+      throw new Error("Email is already registered to another account.");
     }
 
     const totalUsers = (await ctx.db.query("users").take(1)).length;
@@ -77,7 +76,7 @@ export const upsertFromIdentity = mutation({
 
     return ctx.db.insert("users", {
       workosId,
-      email: args.email,
+      email,
       displayName,
       role,
       lastSeenAt: Date.now(),

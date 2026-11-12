@@ -47,6 +47,7 @@ export const retrieveContext = action({
   },
   returns: v.array(retrievedChunkValidator),
   handler: async (ctx, { query, moduleId, limit }): Promise<RetrievedChunk[]> => {
+    await ctx.runQuery(internal.retrieval.requireProvisionedUser, {});
     if (!query.trim()) return [];
 
     const apiKey = process.env.AI_GATEWAY_API_KEY;
@@ -235,6 +236,15 @@ export const allLessonsForIndexing = internalQuery({
   handler: async (ctx) => {
     const lessons = await ctx.db.query("lessons").collect();
     return lessons.map((l) => ({ _id: l._id, moduleId: l.moduleId, body: l.body }));
+  },
+});
+
+export const requireProvisionedUser = internalQuery({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    await getCurrentUser(ctx);
+    return null;
   },
 });
 
