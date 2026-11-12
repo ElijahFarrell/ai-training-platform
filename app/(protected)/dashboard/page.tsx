@@ -6,7 +6,6 @@ import { useQuery } from "convex/react";
 import { ArrowRight, ClipboardList, GraduationCap, Sparkles } from "lucide-react";
 
 import { api } from "@/convex/_generated/api";
-import { AuthDebugBanner } from "@/components/debug/auth-debug-banner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,7 +34,6 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-10">
-      <AuthDebugBanner />
       <header className="flex flex-col gap-3">
         <Badge variant="outline" className="self-start">
           <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Dashboard</span>

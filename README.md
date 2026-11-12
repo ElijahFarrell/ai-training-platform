@@ -1,118 +1,138 @@
-# Federal AI Training Institute · Demo platform
+# Federal AI Training Institute
 
-Closed-access AI training for federal employees. Watch reviewed video modules, read reference material, take quizzes, and ask a module-grounded AI assistant — all behind invitation-only WorkOS AuthKit login.
+A fictional demo of a closed-access training app: signed-in learners read a seeded curriculum, take graded quizzes, and chat with an assistant that answers from that curriculum. Administrators see a roster and illustrative engagement charts.
+
+**This is a fictional demo platform with sample data. It is not affiliated with or endorsed by any government agency.**
+
+The product name, agency framing, and lesson text are sample content for the demo. They are not a real training program.
+
+## What it does
+
+- **Landing and sign-in.** `/` is public. Sign-in goes through WorkOS AuthKit. `proxy.ts` requires a session for every other matched route. `/callback` completes the OAuth redirect and returns the user to `/dashboard`.
+- **Learner roster.** The first time a signed-in user hits a protected page, the app upserts a Convex `users` row. The first user becomes `admin`. Later users become `learner`. There is no invitation list, SCIM sync, or per-module enrollment check in this repo.
+- **Curriculum.** Published modules, lessons, and quizzes are seeded. A lesson is a video embed, a reading, or a link to an external document. Opening a lesson marks it in progress. "Mark as complete" persists per user.
+- **Quizzes.** Questions are stored without the correct answer on the read query. Submitting grades the attempt in Convex, stores the score, and returns per-question feedback.
+- **Assistant.** Learners can open a full-page assistant or a lesson chat. Threads and messages are stored in Convex. The model is instructed to answer only from retrieved lesson excerpts and to decline when nothing relevant was retrieved.
+- **Admin.** `/admin` is limited to the `admin` role. Counts (learners, completions, quiz passes) come from Convex. The weekly and per-module charts are synthesized in `lib/admin/fake-metrics.ts` and labeled as demo metrics in the UI.
+
+## Architecture
+
+There is one Mastra agent and no Mastra tools or workflows. Retrieval, grading, and persistence live in Convex and in the Next.js route that calls the agent.
+
+```
+Browser (useChat)
+  → POST /api/chat          WorkOS session required
+    → Convex action retrieval.retrieveContext
+        embed the question (Vercel AI Gateway /v1/embeddings)
+        vectorSearch lessonChunks (optional moduleId filter)
+    → buildGroundedSystemAddendum (lesson text, 6,000 character cap)
+    → Mastra Agent trainingAssistant.stream
+    → @mastra/ai-sdk stream back to the AI SDK UI
+  → client writes the user and assistant text to Convex
+```
+
+| Piece | Where it lives | What it actually does |
+|---|---|---|
+| Agent | `lib/mastra/agents/training-assistant.ts` | One `Agent` with a system prompt. Model defaults to `vercel/openai/gpt-4.1-mini` via `MASTRA_AGENT_MODEL`. No tools, memory module, or workflow graph. |
+| Grounding | `app/api/chat/route.ts`, `lib/mastra/build-grounded-prompt.ts`, `convex/retrieval.ts` | The route embeds and searches before the model runs, then appends excerpts to the system prompt. The agent does not call a retriever itself. |
+| Chat UI | `components/assistant/` | AI SDK `useChat` with a custom transport that sends `moduleId`. |
+| Curriculum API | `convex/modules.ts`, `lessons.ts`, `progress.ts`, `quizzes.ts` | Authenticated queries and mutations. Quiz answers stay on the server until submit. |
+| Seed and index | `convex/_seedData.ts`, `seed.ts`, `bootstrap.ts` | `bootstrap:run` is an internal action: upsert seed content, chunk lesson bodies, embed them, replace `lessonChunks`. |
+| Auth | `proxy.ts`, `convex/auth.config.ts`, `convex/lib/auth.ts` | AuthKit middleware on the Next.js app. Convex checks the WorkOS JWT (`RS256`, user-management issuer). Helpers resolve the Convex user by the token subject. |
+
+Module scope is whatever `moduleId` the client sends. Omit it and retrieval searches every indexed lesson. Any provisioned user can read every published module.
 
 ## Stack
 
-| Layer | Choice | Why |
-|---|---|---|
-| App framework | Next.js 16 App Router (TypeScript) | Server Components for auth/data, route handlers for AI streaming. |
-| Styling | Tailwind CSS v4 + shadcn/ui primitives | Single design token system tuned for an institutional, high-trust visual language. |
-| Auth | WorkOS AuthKit (Next.js SDK) | Enterprise-ready sign-in, application-wide invitations, agency SSO when needed. |
-| Database & API | Convex (queries, mutations, actions, vector search) | One backend for system-of-record state, real-time UI, and grounded retrieval. |
-| Vector store | Convex native `vectorSearch` | Already in the stack; sufficient for seeded modules. Production path swaps in Qdrant via `@mastra/qdrant`. |
-| AI agent | Mastra (`@mastra/core`) + `@mastra/ai-sdk` bridge | Provider-agnostic agent layer with retrieval grounding. |
-| LLM + embeddings | Vercel AI Gateway | One key, every model. Routed via Mastra's `vercel/…` model prefix and the Gateway's OpenAI-compatible embeddings endpoint. |
-| Chat UI | AI SDK UI (`@ai-sdk/react`) | `useChat` for streaming, with custom transport that forwards module scope. |
+| Layer | Choice |
+|---|---|
+| App | Next.js 16 App Router, React 19, TypeScript |
+| UI | Tailwind CSS v4, shadcn/ui primitives, Recharts for the admin charts |
+| Auth | WorkOS AuthKit (`@workos-inc/authkit-nextjs`) |
+| Data | Convex queries, mutations, actions, and a 1536-dimension vector index |
+| Agent | Mastra (`@mastra/core`) bridged with `@mastra/ai-sdk` |
+| Model and embeddings | Vercel AI Gateway. Chat uses the Mastra `vercel/…` model string. Embeddings use the gateway's OpenAI-compatible `/v1/embeddings` endpoint. |
+| Chat client | AI SDK UI (`@ai-sdk/react`) |
 
 ## Project layout
 
 ```
 app/
-  (protected)/                Authenticated learner & admin shell
-    dashboard/                Progress, catalogue, next action
-    modules/[moduleSlug]/     Lesson player + quiz route
-    assistant/                Module-grounded chat
-    admin/                    Roster + activity (admin role only)
-  api/chat/route.ts           AI SDK stream endpoint backed by Mastra
-  callback/route.ts           WorkOS AuthKit OAuth callback
-  layout.tsx                  Fonts + Convex/AuthKit providers
-  page.tsx                    Public landing
-components/
-  ui/                         shadcn primitives (button, card, dialog, …)
-  layout/                     App shell, sign-out, user bootstrap
-  modules/                    Module sidebar & lesson viewer
-  quiz/                       Quiz form with grading feedback
-  assistant/                  Assistant workspace, thread list, chat
-  landing/                    Public sign-in trigger
-  providers/                  ConvexProviderWithAuth + AuthKitProvider
-convex/
-  schema.ts                   Tables, indexes, vectorIndex
-  auth.config.ts              WorkOS JWT validators
-  lib/auth.ts                 getCurrentUser / requireAdmin helpers
-  users.ts                    Identity upsert, me, listAll
-  modules.ts | lessons.ts     Curriculum reads
-  progress.ts                 Lesson progress mutations & queries
-  quizzes.ts                  Quiz + attempt grading
-  assistantThreads.ts         Thread/message persistence
-  retrieval.ts                Embedding + vectorSearch action + indexer
-  seed.ts                     Curriculum upsert + chunk replacement
-  bootstrap.ts                One-shot seed + reindex orchestrator
-  _seedData.ts                Seeded modules, lessons, quizzes (not exposed as a public function)
-lib/
-  utils.ts                    cn() helper
-  mastra/                     Agent + grounding helpers
-proxy.ts                      Next.js 16 middleware (AuthKit)
+  (protected)/          Session required. Dashboard, modules, quiz, assistant, admin
+  api/chat/route.ts     Authenticated stream endpoint
+  callback/route.ts     WorkOS AuthKit callback
+  page.tsx              Public landing
+components/             Shell, lesson player, quiz, assistant, admin charts
+convex/                 Schema, auth, curriculum, retrieval, seed
+lib/mastra/             Agent and grounding prompt
+lib/admin/fake-metrics.ts
+proxy.ts                AuthKit middleware (Next.js 16 proxy convention)
 ```
 
-## Local setup
+## Run locally
 
-### Minimal: landing + auth only (no Convex required)
+Requirements: Node.js, npm, a WorkOS AuthKit application, and (for modules and the assistant) a Convex account plus a Vercel AI Gateway key.
 
-You can boot the platform and exercise the auth flow before standing up Convex. Modules, quizzes, and the assistant require Convex; everything else works.
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
 
-1. `npm install`
-2. Copy `.env.example` → `.env.local` and fill in **only** the WorkOS variables:
-   - `WORKOS_CLIENT_ID`, `WORKOS_API_KEY` from the WorkOS dashboard.
-   - `WORKOS_COOKIE_PASSWORD` — generate with `openssl rand -base64 32`.
-   - `NEXT_PUBLIC_WORKOS_REDIRECT_URI=http://localhost:3000/callback` (must match a Redirect URI registered in WorkOS).
-3. `npm run dev` → visit http://localhost:3000.
+Open http://localhost:3000.
 
-Landing page loads. Sign-in goes through WorkOS. After auth, you'll see a "Convex not configured" screen with the next four commands to run.
+### Auth only
 
-### Full demo: add Convex + the AI assistant
+Fill in the WorkOS variables in `.env.local` (see the table below). Leave `NEXT_PUBLIC_CONVEX_URL` empty. The landing page and sign-in work. Protected pages render a setup screen instead of the dashboard.
 
-4. Get a Vercel AI Gateway key at https://vercel.com/dashboard → AI → Gateway and put it in `.env.local`:
+Register `http://localhost:3000/callback` as a WorkOS redirect URI. It must match `NEXT_PUBLIC_WORKOS_REDIRECT_URI`.
 
-   ```env
-   AI_GATEWAY_API_KEY="..."
-   ```
+### Curriculum and assistant
 
-5. Provision Convex.
-
-   ```bash
-   npx convex dev
-   ```
-
-   First run creates the deployment, writes `NEXT_PUBLIC_CONVEX_URL` into `.env.local`, and starts a watch loop. Leave it running.
-
-6. Set Convex deployment secrets (these live inside Convex, not Next.js).
+1. Set `AI_GATEWAY_API_KEY` in `.env.local`.
+2. Run `npm run convex:dev` (`npx convex dev`). Leave it running. The first run creates a deployment and writes `NEXT_PUBLIC_CONVEX_URL` into `.env.local`.
+3. Set the same WorkOS client id and gateway key inside Convex:
 
    ```bash
-   npx convex env set WORKOS_CLIENT_ID "<same value as Next.js>"
-   npx convex env set AI_GATEWAY_API_KEY "<same value as Next.js>"
+   npx convex env set WORKOS_CLIENT_ID "<same value as .env.local>"
+   npx convex env set AI_GATEWAY_API_KEY "<same value as .env.local>"
    ```
 
-7. Seed the curriculum and build the vector index.
+4. Seed lessons and build the vector index: `npm run bootstrap` (`npx convex run bootstrap:run`).
+5. Refresh the app and sign in. The first user is an admin.
 
-   ```bash
-   npx convex run bootstrap:run
-   ```
+`EMBEDDING_MODEL` and `MASTRA_AGENT_MODEL` are read from the environment. The Convex embedding action reads `EMBEDDING_MODEL` and `AI_GATEWAY_API_KEY` from the Convex deployment, not from Next.js.
 
-   Upserts the seeded modules, lessons, quizzes, then chunks every lesson, hits the AI Gateway's `/v1/embeddings` endpoint, and writes `lessonChunks`.
+## Environment variables
 
-8. Refresh the app. The first user to sign in is auto-promoted to `admin`; subsequent users join as `learner`.
+Copy `.env.example` to `.env.local`. The example file contains placeholders only. `.gitignore` ignores `.env*` and keeps `.env.example`.
 
-## Acceptance check (manual)
+| Variable | Required | Purpose |
+|---|---|---|
+| `WORKOS_CLIENT_ID` | Yes, for sign-in | AuthKit client id. Also set on the Convex deployment so `convex/auth.config.ts` can validate JWTs. |
+| `WORKOS_API_KEY` | Yes, for sign-in | AuthKit API key. |
+| `WORKOS_COOKIE_PASSWORD` | Yes, for sign-in | Secret used to encrypt the session cookie. Generate with `openssl rand -base64 32`. |
+| `NEXT_PUBLIC_WORKOS_REDIRECT_URI` | Yes, for sign-in | Must match a redirect URI in the WorkOS dashboard. Local default: `http://localhost:3000/callback`. |
+| `NEXT_PUBLIC_CONVEX_URL` | For curriculum and chat | Written by `npx convex dev`. |
+| `AI_GATEWAY_API_KEY` | For chat and indexing | Vercel AI Gateway key. Set in `.env.local` and on the Convex deployment. |
+| `MASTRA_AGENT_MODEL` | No | Gateway model id. Default `vercel/openai/gpt-4.1-mini`. |
+| `EMBEDDING_MODEL` | No | Embeddings model. Default `openai/text-embedding-3-small`. Set this on the Convex deployment if you override it. |
 
-- [ ] Visit `/` while logged out → see landing, sign-in routes to WorkOS AuthKit.
-- [ ] Complete invitation flow → land on `/dashboard` with your name in the sidebar.
-- [ ] Open a module → lesson auto-marks "in progress", "Mark as complete" persists across reload.
-- [ ] Take the quiz → grading shows per-question feedback, attempts persist in Convex.
-- [ ] Open the assistant → ask a curriculum question, get an answer that quotes the module text.
-- [ ] Ask the assistant something off-curriculum → it declines instead of hallucinating.
-- [ ] Sign in as a second user → only the first user sees `/admin`.
+## Manual check
 
-## Production path
+- Signed out, `/` shows the landing page and sign-in starts WorkOS.
+- After sign-in, `/dashboard` shows the user and the seeded modules.
+- Opening a lesson marks it in progress. Marking it complete survives a reload.
+- Submitting a quiz shows per-question feedback and a stored attempt.
+- The assistant answers from lesson text and cites the module and lesson. A question with no matching excerpt gets the decline line from the system prompt.
+- A second user can use the learner pages. Only the first user gets `/admin`.
 
-See `~/.cursor/plans/ai_training_platform_8fe08549.plan.md` for the full delta from this demo to a production-grade build (agency SSO/SCIM, content management, ingestion pipeline, vector store migration to Qdrant, compliance foundations, evals).
+## Scripts
+
+| Script | Command |
+|---|---|
+| Dev server | `npm run dev` |
+| Production build | `npm run build` |
+| Lint | `npm run lint` |
+| Convex dev | `npm run convex:dev` |
+| Seed and index | `npm run bootstrap` |

@@ -11,7 +11,6 @@
 import type * as _seedData from "../_seedData.js";
 import type * as admin from "../admin.js";
 import type * as assistantThreads from "../assistantThreads.js";
-import type * as authDebug from "../authDebug.js";
 import type * as bootstrap from "../bootstrap.js";
 import type * as lessons from "../lessons.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -32,7 +31,6 @@ declare const fullApi: ApiFromModules<{
   _seedData: typeof _seedData;
   admin: typeof admin;
   assistantThreads: typeof assistantThreads;
-  authDebug: typeof authDebug;
   bootstrap: typeof bootstrap;
   lessons: typeof lessons;
   "lib/auth": typeof lib_auth;
